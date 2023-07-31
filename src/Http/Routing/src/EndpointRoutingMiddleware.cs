@@ -136,6 +136,7 @@ internal sealed partial class EndpointRoutingMiddleware
             // We do this during endpoint routing to ensure that successive middlewares in the pipeline
             // can access the feature with the correct value.
             SetMaxRequestBodySize(httpContext);
+            SetRequestFormLimits(httpContext, endpoint);
 
             var shortCircuitMetadata = endpoint.Metadata.GetMetadata<ShortCircuitMetadata>();
             if (shortCircuitMetadata is not null)
@@ -334,6 +335,41 @@ internal sealed partial class EndpointRoutingMiddleware
         }
     }
 
+    private void SetRequestFormLimits(HttpContext context, Endpoint endpoint)
+    {
+        var features = context.Features;
+        var formFeature = features.Get<IFormFeature>();
+
+        if (formFeature == null || formFeature?.Form == null)
+        {
+            // Request form has not been read yet, so set the limits
+            var requestFormLimits = endpoint.Metadata.GetMetadata<IRequestFormLimitsMetadata>();
+            if (requestFormLimits is null)
+            {
+                return;
+            }
+            var formOptions = new FormOptions
+            {
+                BufferBody = requestFormLimits.BufferBody,
+                MemoryBufferThreshold = requestFormLimits.MemoryBufferThreshold,
+                BufferBodyLengthLimit = requestFormLimits.BufferBodyLengthLimit,
+                ValueCountLimit = requestFormLimits.ValueCountLimit,
+                KeyLengthLimit = requestFormLimits.KeyLengthLimit,
+                ValueLengthLimit = requestFormLimits.ValueLengthLimit,
+                MultipartBoundaryLengthLimit = requestFormLimits.MultipartBoundaryLengthLimit,
+                MultipartHeadersCountLimit = requestFormLimits.MultipartHeadersCountLimit,
+                MultipartHeadersLengthLimit = requestFormLimits.MultipartHeadersLengthLimit,
+                MultipartBodyLengthLimit = requestFormLimits.MultipartBodyLengthLimit
+            };
+            features.Set<IFormFeature>(new FormFeature(context.Request, formOptions));
+            Log.AppliedRequestFormLimits(_logger);
+        }
+        else
+        {
+            Log.CannotApplyRequestFormLimits(_logger);
+        }
+    }
+
     private static partial class Log
     {
         public static void MatchSuccess(ILogger logger, Endpoint endpoint)
@@ -377,5 +413,11 @@ internal sealed partial class EndpointRoutingMiddleware
 
         [LoggerMessage(12, LogLevel.Debug, "The maximum request body size has been disabled.", EventName = "MaxRequestBodySizeDisabled")]
         public static partial void MaxRequestBodySizeDisabled(ILogger logger);
+
+        [LoggerMessage(13, LogLevel.Warning, "Unable to apply configured form options since the request form has already been read.", EventName = "CannotApplyRequestFormLimits")]
+        public static partial void CannotApplyRequestFormLimits(ILogger logger);
+
+        [LoggerMessage(14, LogLevel.Debug, "Applied the configured form options on the current request.", EventName = "AppliedRequestFormLimits")]
+        public static partial void AppliedRequestFormLimits(ILogger logger);
     }
 }
